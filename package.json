@@ -2,7 +2,7 @@
   "name": "custom-require",
   "displayName": "Custom Require",
   "description": "Go to Definition support for custom require-like functions (myRequire, etc.)",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "NachoDecima",
   "license": "MIT",
   "repository": {
