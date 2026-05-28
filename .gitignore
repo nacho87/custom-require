@@ -1,0 +1,6 @@
+node_modules/
+out/
+examples/
+plan-extension.md
+plan-extension2.md
+*.vsix
