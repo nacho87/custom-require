@@ -1,7 +1,9 @@
+src/**
 .vscode/**
 .vscode-test/**
-out/**
 node_modules/**
 .gitignore
-**.map
-*.ts
+.gitattributes
+plan-extension.md
+plan-extension2.md
+examples/**

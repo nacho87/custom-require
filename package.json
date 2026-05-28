@@ -4,6 +4,14 @@
   "description": "Go to Definition support for custom require-like functions (myRequire, etc.)",
   "version": "0.0.1",
   "publisher": "NachoDecima",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nacho87/custom-require"
+  },
+  "bugs": {
+    "url": "https://github.com/nacho87/custom-require/issues"
+  },
   "engines": {
     "vscode": "^1.96.0"
   },
