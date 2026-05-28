@@ -20,6 +20,24 @@ function getCachedAST(document: vscode.TextDocument): any {
   return null;
 }
 
+function resolvePath(rawPath: string, baseDir: string): string | null {
+  let resolved = resolveModulePath(baseDir, rawPath);
+  if (resolved) return resolved;
+
+  // Absolute path fallback: try workspace roots
+  if (rawPath.startsWith('/')) {
+    for (const folder of vscode.workspace.workspaceFolders || []) {
+      resolved = resolveModulePath(folder.uri.fsPath, rawPath);
+      if (resolved) return resolved;
+      // Also try without leading slash (project-relative convention)
+      resolved = resolveModulePath(folder.uri.fsPath, rawPath.slice(1));
+      if (resolved) return resolved;
+    }
+  }
+
+  return null;
+}
+
 function findVarDeclarator(ast: any, name: string): any {
   let result: any = null;
   function walk(node: any) {
@@ -107,7 +125,7 @@ export class MyRequireDefinitionProvider implements vscode.DefinitionProvider {
 
     const rawPath = args[0].value;
     const baseDir = path.dirname(document.uri.fsPath);
-    const resolvedPath = resolveModulePath(baseDir, rawPath);
+    const resolvedPath = resolvePath(rawPath, baseDir);
     if (!resolvedPath) return undefined;
 
     return new vscode.Location(vscode.Uri.file(resolvedPath), new vscode.Position(0, 0));
@@ -170,7 +188,7 @@ export class MyRequireDefinitionProvider implements vscode.DefinitionProvider {
 
     const filePath = args[0].value;
     const baseDir = path.dirname(document.uri.fsPath);
-    const resolvedPath = resolveModulePath(baseDir, filePath);
+    const resolvedPath = resolvePath(filePath, baseDir);
     if (!resolvedPath) return null;
 
     if (declarator.id.type === 'Identifier') {
@@ -196,7 +214,7 @@ export class MyRequireDefinitionProvider implements vscode.DefinitionProvider {
     if (!match) return undefined;
 
     const baseDir = path.dirname(document.uri.fsPath);
-    const resolved = resolveModulePath(baseDir, match.filePath);
+    const resolved = resolvePath(match.filePath, baseDir);
     if (!resolved) return undefined;
 
     return this.findExportInFile(resolved, propertyName);
@@ -226,7 +244,7 @@ export class MyRequireDocumentLinkProvider implements vscode.DocumentLinkProvide
 
     for (const lit of literals) {
       const baseDir = path.dirname(document.uri.fsPath);
-      const resolvedPath = resolveModulePath(baseDir, lit.value);
+      const resolvedPath = resolvePath(lit.value, baseDir);
       if (!resolvedPath) continue;
 
       const range = new vscode.Range(
