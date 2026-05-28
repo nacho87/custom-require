@@ -13,7 +13,7 @@
     "url": "https://github.com/nacho87/custom-require/issues"
   },
   "engines": {
-    "vscode": "^1.96.0"
+    "vscode": "^1.120.0"
   },
   "categories": [
     "Other"
@@ -64,3 +64,4 @@
     "@babel/types": "^7.24.0"
   }
 }
+

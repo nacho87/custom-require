@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs';
 import {
   findNodePathChain, findRequireCalls, findExports, parseFile,
   resolveModulePath, findRequireStringLiterals, StringLiteralRange, RequireMapping
@@ -24,14 +25,30 @@ function resolvePath(rawPath: string, baseDir: string): string | null {
   let resolved = resolveModulePath(baseDir, rawPath);
   if (resolved) return resolved;
 
-  // Absolute path fallback: try workspace roots
   if (rawPath.startsWith('/')) {
+    // Try from baseDir without leading / (project-relative fallback)
+    resolved = resolveModulePath(baseDir, rawPath.slice(1));
+    if (resolved) return resolved;
+
+    // Try each workspace folder
     for (const folder of vscode.workspace.workspaceFolders || []) {
       resolved = resolveModulePath(folder.uri.fsPath, rawPath);
       if (resolved) return resolved;
-      // Also try without leading slash (project-relative convention)
       resolved = resolveModulePath(folder.uri.fsPath, rawPath.slice(1));
       if (resolved) return resolved;
+    }
+
+    // Last resort: walk up from baseDir trying the relative path
+    let current = baseDir;
+    while (true) {
+      const testPath = path.join(current, rawPath.slice(1));
+      if (fs.existsSync(testPath)) {
+        const stat = fs.statSync(testPath);
+        if (stat.isFile()) return testPath;
+      }
+      const parent = path.dirname(current);
+      if (parent === current) break;
+      current = parent;
     }
   }
 
