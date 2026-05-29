@@ -2,7 +2,7 @@
   "name": "custom-require",
   "displayName": "Custom Require",
   "description": "Go to Definition support for custom require-like functions (myRequire, etc.)",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "publisher": "NachoDecima",
   "license": "MIT",
   "repository": {
@@ -49,14 +49,16 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run esbuild-base -- --minify",
+    "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
+    "compile": "npm run esbuild-base",
+    "watch": "npm run esbuild-base -- --sourcemap --watch",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/vscode": "^1.96.0",
     "@types/node": "^20.0.0",
+    "@types/vscode": "^1.96.0",
+    "esbuild": "^0.28.0",
     "typescript": "^5.3.0"
   },
   "dependencies": {
@@ -64,4 +66,3 @@
     "@babel/types": "^7.24.0"
   }
 }
-
