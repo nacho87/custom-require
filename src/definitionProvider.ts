@@ -3,22 +3,113 @@ import * as path from 'path';
 import * as fs from 'fs';
 import {
   findNodePathChain, findRequireCalls, findExports, parseFile,
-  resolveModulePath, findRequireStringLiterals, StringLiteralRange, RequireMapping
+  resolveModulePath, findRequireStringLiterals, isMatchingRequireCall,
+  RequireMapping, ExportLocation
 } from './analyzer';
 
-const astCache = new Map<string, { version: number; ast: any }>();
+interface CachedFile {
+  version: number;
+  ast: any;
+  exports: ExportLocation[] | null;
+  requireCalls: { key: string; result: RequireMapping[] } | null;
+}
+
+class LRUMap<K, V> {
+  private max: number;
+  private map: Map<K, V>;
+
+  constructor(max: number) {
+    this.max = max;
+    this.map = new Map();
+  }
+
+  get(key: K): V | undefined {
+    const val = this.map.get(key);
+    if (val !== undefined) {
+      this.map.delete(key);
+      this.map.set(key, val);
+    }
+    return val;
+  }
+
+  set(key: K, value: V) {
+    if (this.map.has(key)) {
+      this.map.delete(key);
+    } else if (this.map.size >= this.max) {
+      const firstKey = this.map.keys().next().value;
+      if (firstKey !== undefined) this.map.delete(firstKey);
+    }
+    this.map.set(key, value);
+  }
+
+  delete(key: K) {
+    this.map.delete(key);
+  }
+}
+
+const fileCache = new LRUMap<string, CachedFile>(50);
 
 function getCachedAST(document: vscode.TextDocument): any {
-  const cached = astCache.get(document.uri.fsPath);
+  const cached = fileCache.get(document.uri.fsPath);
   if (cached && cached.version === document.version) {
     return cached.ast;
   }
   const result = parseFile(document.uri.fsPath);
   if (result) {
-    astCache.set(document.uri.fsPath, { version: document.version, ast: result.ast });
+    fileCache.set(document.uri.fsPath, {
+      version: document.version, ast: result.ast, exports: null, requireCalls: null
+    });
     return result.ast;
   }
   return null;
+}
+
+function getFileAST(filePath: string): any {
+  const cached = fileCache.get(filePath);
+  try {
+    const stat = fs.statSync(filePath);
+    const mtime = stat.mtimeMs;
+    if (cached && cached.version === mtime) {
+      return cached.ast;
+    }
+    const result = parseFile(filePath);
+    if (result) {
+      fileCache.set(filePath, {
+        version: mtime, ast: result.ast, exports: null, requireCalls: null
+      });
+      return result.ast;
+    }
+  } catch {
+    // file might not exist or be inaccessible
+  }
+  return null;
+}
+
+function getCachedExports(filePath: string): ExportLocation[] {
+  const ast = getFileAST(filePath);
+  if (!ast) return [];
+  const cached = fileCache.get(filePath);
+  if (cached && cached.exports) {
+    return cached.exports;
+  }
+  const exports = findExports(ast);
+  if (cached) {
+    cached.exports = exports;
+  }
+  return exports;
+}
+
+function getCachedRequireCalls(ast: any, functionNames: string[], filePath: string): RequireMapping[] {
+  const key = functionNames.slice().sort().join(',');
+  const cached = fileCache.get(filePath);
+  if (cached && cached.requireCalls && cached.requireCalls.key === key) {
+    return cached.requireCalls.result;
+  }
+  const result = findRequireCalls(ast, functionNames);
+  if (cached) {
+    cached.requireCalls = { key, result };
+  }
+  return result;
 }
 
 function resolvePath(rawPath: string, baseDir: string): string | null {
@@ -119,7 +210,7 @@ export class MyRequireDefinitionProvider implements vscode.DefinitionProvider {
     }
 
     if (deepest.type === 'Identifier') {
-      const result = await this.provideDefinitionForIdentifier(deepest, chain, document);
+      const result = await this.provideDefinitionForIdentifier(deepest, chain, document, ast);
       if (result) return result;
     }
 
@@ -149,7 +240,7 @@ export class MyRequireDefinitionProvider implements vscode.DefinitionProvider {
   }
 
   private async provideDefinitionForIdentifier(
-    node: any, chain: any[], document: vscode.TextDocument
+    node: any, chain: any[], document: vscode.TextDocument, ast: any
   ): Promise<vscode.Location | undefined> {
     const identifierName = node.name;
     if (!identifierName) return undefined;
@@ -161,7 +252,23 @@ export class MyRequireDefinitionProvider implements vscode.DefinitionProvider {
       if (prop && prop.type === 'Identifier' && prop === node) {
         const objName = memberExpr.object?.type === 'Identifier' ? memberExpr.object.name : null;
         if (objName) {
-          return this.resolvePropertyDefinition(objName, identifierName, document);
+          return this.resolvePropertyDefinition(objName, identifierName, document, ast);
+        }
+
+        // Case A2: inline require call e.g. myRequire('/path').getValue()
+        if (memberExpr.object?.type === 'CallExpression') {
+          const callee = memberExpr.object.callee;
+          if (callee && callee.type === 'Identifier' && this.functionNames.includes(callee.name)) {
+            const args = memberExpr.object.arguments;
+            if (args && args.length > 0 && args[0]?.type === 'StringLiteral') {
+              const rawPath = args[0].value;
+              const baseDir = path.dirname(document.uri.fsPath);
+              const resolvedPath = resolvePath(rawPath, baseDir);
+              if (resolvedPath) {
+                return this.findExportInFile(resolvedPath, identifierName);
+              }
+            }
+          }
         }
       }
     }
@@ -179,14 +286,11 @@ export class MyRequireDefinitionProvider implements vscode.DefinitionProvider {
     }
 
     // Case C: standalone identifier e.g. console.log(getEjemplo)
-    const ast = getCachedAST(document);
-    if (ast) {
-      const varDecl = findVarDeclarator(ast, identifierName);
-      if (varDecl && varDecl.id?.type === 'ObjectPattern') {
-        const reqMapping = this.matchRequireCall(varDecl, document);
-        if (reqMapping && reqMapping.destructuredNames.includes(identifierName)) {
-          return this.findExportInFile(reqMapping.filePath, identifierName);
-        }
+    const varDecl = findVarDeclarator(ast, identifierName);
+    if (varDecl && varDecl.id?.type === 'ObjectPattern') {
+      const reqMapping = this.matchRequireCall(varDecl, document);
+      if (reqMapping && reqMapping.destructuredNames.includes(identifierName)) {
+        return this.findExportInFile(reqMapping.filePath, identifierName);
       }
     }
 
@@ -195,15 +299,9 @@ export class MyRequireDefinitionProvider implements vscode.DefinitionProvider {
 
   private matchRequireCall(declarator: any, document: vscode.TextDocument): RequireMapping | null {
     const init = declarator.init;
-    if (!init || init.type !== 'CallExpression') return null;
+    if (!isMatchingRequireCall(init, this.functionNames)) return null;
 
-    const callee = init.callee;
-    if (!callee || callee.type !== 'Identifier' || !this.functionNames.includes(callee.name)) return null;
-
-    const args = init.arguments;
-    if (!args || args.length === 0 || args[0].type !== 'StringLiteral') return null;
-
-    const filePath = args[0].value;
+    const filePath = init.arguments[0].value;
     const baseDir = path.dirname(document.uri.fsPath);
     const resolvedPath = resolvePath(filePath, baseDir);
     if (!resolvedPath) return null;
@@ -221,12 +319,9 @@ export class MyRequireDefinitionProvider implements vscode.DefinitionProvider {
   }
 
   private async resolvePropertyDefinition(
-    objectName: string, propertyName: string, document: vscode.TextDocument
+    objectName: string, propertyName: string, document: vscode.TextDocument, ast: any
   ): Promise<vscode.Location | undefined> {
-    const ast = getCachedAST(document);
-    if (!ast) return undefined;
-
-    const requireCalls = findRequireCalls(ast, this.functionNames);
+    const requireCalls = getCachedRequireCalls(ast, this.functionNames, document.uri.fsPath);
     const match = requireCalls.find(r => r.variableName === objectName || r.destructuredNames.includes(objectName));
     if (!match) return undefined;
 
@@ -238,10 +333,10 @@ export class MyRequireDefinitionProvider implements vscode.DefinitionProvider {
   }
 
   private async findExportInFile(targetPath: string, exportName: string): Promise<vscode.Location | undefined> {
-    const result = parseFile(targetPath);
-    if (!result) return undefined;
+    const ast = getFileAST(targetPath);
+    if (!ast) return undefined;
 
-    const exports = findExports(result.ast);
+    const exports = getCachedExports(targetPath);
     const match = exports.find(e => e.name === exportName);
     if (!match) return undefined;
 

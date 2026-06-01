@@ -2,10 +2,10 @@ import * as vscode from 'vscode';
 import { MyRequireDefinitionProvider, MyRequireDocumentLinkProvider } from './definitionProvider';
 
 const JS_LANGUAGES = [
-  { scheme: 'file', language: 'javascript' },
-  { scheme: 'file', language: 'typescript' },
-  { scheme: 'file', language: 'javascriptreact' },
-  { scheme: 'file', language: 'typescriptreact' },
+  { language: 'javascript' },
+  { language: 'typescript' },
+  { language: 'javascriptreact' },
+  { language: 'typescriptreact' },
 ];
 
 let currentRegistrations: vscode.Disposable[] = [];
@@ -50,8 +50,4 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage('Custom Require: Use Ctrl+Click / Cmd+Click on paths or properties to go to their definition.');
     })
   );
-}
-
-export function deactivate() {
-  for (const d of currentRegistrations) d.dispose();
 }

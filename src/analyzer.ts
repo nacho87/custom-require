@@ -72,6 +72,15 @@ export function findNodePathChain(ast: any, line: number, column: number): any[]
   return chain;
 }
 
+export function isMatchingRequireCall(node: any, functionNames: string[]): boolean {
+  if (node?.type !== 'CallExpression') return false;
+  const callee = node.callee;
+  if (!callee || callee.type !== 'Identifier' || !functionNames.includes(callee.name)) return false;
+  const args = node.arguments;
+  if (!args || args.length === 0 || args[0].type !== 'StringLiteral') return false;
+  return true;
+}
+
 export function findRequireCalls(ast: any, functionNames: string[]): RequireMapping[] {
   const results: RequireMapping[] = [];
 
@@ -80,12 +89,8 @@ export function findRequireCalls(ast: any, functionNames: string[]): RequireMapp
 
     if (node.type === 'VariableDeclaration') {
       for (const decl of node.declarations || []) {
-        if (decl.init && decl.init.type === 'CallExpression') {
-          const callee = decl.init.callee;
-          if (callee && callee.type === 'Identifier' && functionNames.includes(callee.name)) {
-            const args = decl.init.arguments;
-            if (args && args.length > 0 && args[0].type === 'StringLiteral') {
-              const filePath = args[0].value;
+        if (isMatchingRequireCall(decl.init, functionNames)) {
+              const filePath = decl.init.arguments[0].value;
 
               if (decl.id.type === 'Identifier') {
                 results.push({ variableName: decl.id.name, filePath, destructuredNames: [] });
@@ -97,8 +102,6 @@ export function findRequireCalls(ast: any, functionNames: string[]): RequireMapp
               }
             }
           }
-        }
-      }
     }
 
     for (const key of Object.keys(node)) {
